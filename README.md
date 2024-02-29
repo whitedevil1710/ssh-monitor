@@ -14,9 +14,9 @@ This Python script monitors SSH login activities on a system by parsing the auth
    cd ssh-login-monitor
    ```
 
-3. Run the script:
+3. Run the setup file:
    ```bash
-   python ssh_login_monitor.py
+     bash setup.sh
    ```
 
 ## Requirements
