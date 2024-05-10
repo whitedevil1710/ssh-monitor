@@ -34,6 +34,16 @@ class Monitor:
             print(f"Error extracting username: {e}")
             return []
 
+    def read_log(self):
+        file = f'/home/{os.getlogin()}/.ssh_login.log'
+        log = []
+        if os.path.exists(file):
+            with open(file,'r') as f:
+                lines = f.readlines()
+                for i in lines:
+                    log.append(i.strip())
+        return log
+
     def check(self):
         regex_accepted = r"(\w{3}\s+\d{1,2}\s\d{2}:\d{2}:\d{2})\s(\w+)-(\d+)\s(\w+)\[(\d+)\]:\sAccepted\spassword\sfor\s(\w+)\sfrom\s([\d\.]+)\sport\s(\d+)\sssh(\d+)"
         regex_failed = r"(\w{3}\s+\d{1,2}\s\d{2}:\d{2}:\d{2})\s(\w+)-(\d+)\s(\w+)\[(\d+)\]:\sFailed\spassword\sfor\s(\w+)\sfrom\s([\d\.]+)\sport\s(\d+)\sssh(\d+)"
@@ -51,13 +61,13 @@ class Monitor:
                             if accepted:
                                 username = accepted.group(6)
                                 ip_address = accepted.group(7)
-                                # print(f"Successful login: {username} from {ip_address}")
+                                print(f"Successful login: {username} from {ip_address}")
                                 self.send_notification(f"{username} logged in from {ip_address}")
                                 self.log_activity(f"Successful login: {username} from {ip_address}")
                             elif rejected:
                                 username = rejected.group(6)
                                 ip_address = rejected.group(7)
-                                # print(f"Failed login attempt: {username} from {ip_address}")
+                                print(f"Failed login attempt: {username} from {ip_address}")
                                 self.send_notification(f"{username} is trying to SSH into your system")
                                 self.log_activity(f"Failed login attempt: {username} from {ip_address}")
         except Exception as e:
@@ -79,6 +89,9 @@ class Monitor:
 monitor_instance = Monitor()
 os.system('cls' if os.name == 'nt' else 'clear')
 print("SSH Monitoring started.")
+log = monitor_instance.read_log()
+for i in log:
+    print(i)
 while True:
     monitor_instance.check()
     time.sleep(1)
