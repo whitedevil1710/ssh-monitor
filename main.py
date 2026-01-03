@@ -1,97 +1,92 @@
-import subprocess
+import os
 import re
 import time
 import logging
-import os
+import subprocess
+import getpass
 
-class Monitor:
+class SSHMonitor:
     def __init__(self):
-        self.ip = []
-        self.logfile = "/var/log/auth.log"
-        self.sent_notifications = set() 
-        self.last_timestamp = None
-        self.log_setup()
-        
-    def log_setup(self):
-        logging.basicConfig(filename=f'/home/{os.getlogin()}/.ssh_login.log', level=logging.INFO, format='%(asctime)s - %(message)s')
+        self.logfile = self.detect_logfile()
+        self.offset = 0
+        self.username = getpass.getuser()
 
-    def log_fetch(self):
-        try:
-            with open(self.logfile, 'r') as file:
-                last_lines = file.readlines()[-3:]  
-                return last_lines
-        except Exception as e:
-            print(f"Error fetching log: {e}")
-            return []
+        self.logfile_local = f"/home/{self.username}/.ssh_login.log"
+        self.setup_logging()
 
-    def extract_username(self):
-        try:
-            command = subprocess.Popen(['ls', '/home/'], stdout=subprocess.PIPE)
-            output, _ = command.communicate()
-            users = output.decode().strip().split("\n")
-            return users
-        except Exception as e:
-            print(f"Error extracting username: {e}")
-            return []
+        # Regex (portable)
+        self.accepted_re = re.compile(
+            r"Accepted password for (\S+) from ([\d.]+)"
+        )
+        self.failed_re = re.compile(
+            r"Failed password for (\S+) from ([\d.]+)"
+        )
 
-    def read_log(self):
-        file = f'/home/{os.getlogin()}/.ssh_login.log'
-        log = []
-        if os.path.exists(file):
-            with open(file,'r') as f:
-                lines = f.readlines()
-                for i in lines:
-                    log.append(i.strip())
-        return log
+    def detect_logfile(self):
+        if os.path.exists("/var/log/auth.log"):
+            return "/var/log/auth.log"
+        elif os.path.exists("/var/log/secure"):
+            return "/var/log/secure"
+        else:
+            raise FileNotFoundError("No SSH auth log found")
 
-    def check(self):
-        regex_accepted = r"(\w{3}\s+\d{1,2}\s\d{2}:\d{2}:\d{2})\s(\w+)-(\d+)\s(\w+)\[(\d+)\]:\sAccepted\spassword\sfor\s(\w+)\sfrom\s([\d\.]+)\sport\s(\d+)\sssh(\d+)"
-        regex_failed = r"(\w{3}\s+\d{1,2}\s\d{2}:\d{2}:\d{2})\s(\w+)-(\d+)\s(\w+)\[(\d+)\]:\sFailed\spassword\sfor\s(\w+)\sfrom\s([\d\.]+)\sport\s(\d+)\sssh(\d+)"
-        try:
-            last_logs = self.log_fetch()
-            for last_log in last_logs:
-                if last_log:
-                    match = re.match(r'(\w{3}\s+\d{1,2}\s\d{2}:\d{2}:\d{2}).*', last_log)
-                    if match:
-                        timestamp = match.group(1)
-                        if timestamp not in self.sent_notifications:
-                            self.sent_notifications.add(timestamp)
-                            accepted = re.match(regex_accepted, last_log)
-                            rejected = re.match(regex_failed, last_log)
-                            if accepted:
-                                username = accepted.group(6)
-                                ip_address = accepted.group(7)
-                                print(f"Successful login: {username} from {ip_address}")
-                                self.send_notification(f"{username} logged in from {ip_address}")
-                                self.log_activity(f"Successful login: {username} from {ip_address}")
-                            elif rejected:
-                                username = rejected.group(6)
-                                ip_address = rejected.group(7)
-                                print(f"Failed login attempt: {username} from {ip_address}")
-                                self.send_notification(f"{username} is trying to SSH into your system")
-                                self.log_activity(f"Failed login attempt: {username} from {ip_address}")
-        except Exception as e:
-            print(f"Error checking log: {e}")
+    def setup_logging(self):
+        logging.basicConfig(
+            filename=self.logfile_local,
+            level=logging.INFO,
+            format="%(asctime)s - %(message)s",
+        )
 
     def send_notification(self, message):
         try:
-            subprocess.Popen(['notify-send', 'SSH Login Monitor', message,'-u','critical'])
-        except Exception as e:
-            print(f"Error sending notification: {e}")
+            subprocess.Popen(
+                ["notify-send", "SSH Login Monitor", message, "-u", "critical"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except:
+            pass  # Safe on servers
 
-    def log_activity(self, message):
-        try:
-            logging.info(message)
-        except Exception as e:
-            print(f"Error logging activity: {e}")
+    def monitor(self):
+        with open(self.logfile, "r") as f:
+            f.seek(0, os.SEEK_END)
+            self.offset = f.tell()
+
+        print(f"[+] Monitoring SSH log: {self.logfile}")
+
+        while True:
+            with open(self.logfile, "r") as f:
+                f.seek(self.offset)
+                lines = f.readlines()
+                self.offset = f.tell()
+
+            for line in lines:
+                acc = self.accepted_re.search(line)
+                fail = self.failed_re.search(line)
+
+                if acc:
+                    user, ip = acc.groups()
+                    msg = f"Successful SSH login: {user} from {ip}"
+                    print(msg)
+                    logging.info(msg)
+                    self.send_notification(msg)
+
+                elif fail:
+                    user, ip = fail.groups()
+                    msg = f"Failed SSH login: {user} from {ip}"
+                    print(msg)
+                    logging.warning(msg)
+                    self.send_notification(msg)
+
+            time.sleep(1)
 
 
-monitor_instance = Monitor()
-os.system('cls' if os.name == 'nt' else 'clear')
-print("SSH Monitoring started.")
-log = monitor_instance.read_log()
-for i in log:
-    print(i)
-while True:
-    monitor_instance.check()
-    time.sleep(1)
+if __name__ == "__main__":
+    os.system("clear")
+    print("SSH Monitoring started...\n")
+
+    try:
+        monitor = SSHMonitor()
+        monitor.monitor()
+    except Exception as e:
+        print(f"[!] Error: {e}")
